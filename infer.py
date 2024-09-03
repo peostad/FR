@@ -15,12 +15,12 @@ from torchvision.transforms.functional import to_tensor
 logging.basicConfig(level=logging.INFO)
 
 # Check for GPU availability
-#device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-device = 'cpu'
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
 print(f"Using device: {device}")
 
 # Initialize MTCNN
-mtcnn = MTCNN(keep_all=True, device=device)
+mtcnn = MTCNN(keep_all=True, device='cpu')
 
 def align_face(image, landmarks):
     left_eye, right_eye = landmarks[0], landmarks[1]
