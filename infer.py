@@ -8,6 +8,8 @@ import os
 import cv2
 import time
 from PIL import Image
+from facenet_pytorch import MTCNN
+from torchvision.transforms.functional import to_tensor
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -16,28 +18,52 @@ logging.basicConfig(level=logging.INFO)
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
-# Load YOLOv5 model
-yolo_model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True).to(device)
+# Initialize MTCNN
+mtcnn = MTCNN(keep_all=True, device=device)
+
+def align_face(image, landmarks):
+    left_eye, right_eye = landmarks[0], landmarks[1]
+    
+    # Calculate angle
+    dY = right_eye[1] - left_eye[1]
+    dX = right_eye[0] - left_eye[0]
+    angle = np.degrees(np.arctan2(dY, dX)) - 180
+
+    # Get the center point between the eyes
+    center = ((left_eye[0] + right_eye[0]) // 2, (left_eye[1] + right_eye[1]) // 2)
+
+    # Get the rotation matrix
+    M = cv2.getRotationMatrix2D(center, angle, 1)
+
+    # Rotate the image
+    aligned_face = cv2.warpAffine(image, M, (image.shape[1], image.shape[0]), flags=cv2.INTER_CUBIC)
+
+    return aligned_face
 
 def get_embedding(image):
-    # Face Detection
+    # Convert image to RGB (MTCNN expects RGB images)
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    
+    # Face Detection and Landmark Detection
     detection_start = time.time()
-    results = yolo_model(image)
+    boxes, probs, landmarks = mtcnn.detect(Image.fromarray(image_rgb), landmarks=True)
     detection_time = (time.time() - detection_start) * 1000
     
-    # Filter for person class (index 0 in COCO dataset)
-    person_detections = results.xyxy[0][results.xyxy[0][:, -1] == 0]
-    
-    if len(person_detections) == 0:
-        logging.warning("No person detected")
+    if boxes is None or len(boxes) == 0:
+        logging.warning("No face detected")
         return None, detection_time, None, None
     
-    # Face Alignment (Cropping) - using the first detected person
+    # Face Alignment (using the first detected face)
     alignment_start = time.time()
-    box = person_detections[0].cpu().numpy()
-    x1, y1, x2, y2 = map(int, box[:4])
+    box = boxes[0]
+    landmark = landmarks[0]
+    x1, y1, x2, y2 = map(int, box)
     face_img = image[y1:y2, x1:x2]
-    face_tensor = transform(Image.fromarray(cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB))).unsqueeze(0).to(device)
+    aligned_face = align_face(face_img, landmark)
+    
+    # Resize and prepare for the embedding model
+    aligned_face_pil = Image.fromarray(cv2.cvtColor(aligned_face, cv2.COLOR_BGR2RGB))
+    face_tensor = transform(aligned_face_pil).unsqueeze(0).to(device)
     alignment_time = (time.time() - alignment_start) * 1000
     
     # Face Embedding
@@ -73,7 +99,7 @@ if image1 is None:
 
 embedding1, _, _, _ = get_embedding(image1)
 if embedding1 is None:
-    logging.error("No person detected in the first image. Please use an image with a clear face.")
+    logging.error("No face detected in the first image. Please use an image with a clear face.")
     exit()
 
 embedding1 = F.normalize(embedding1, p=2, dim=0).numpy()
@@ -108,7 +134,7 @@ while True:
     cv2.putText(frame, f"Det: {detection_time:.2f}ms", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
     
     if embedding2 is None:
-        cv2.putText(frame, "No person detected", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        cv2.putText(frame, "No face detected", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
     else:
         embedding2 = F.normalize(embedding2, p=2, dim=0).numpy()
         
@@ -135,7 +161,7 @@ while True:
     
     # Print debugging information in the terminal
     if embedding2 is None:
-        print(f"No person detected. Detection time: {detection_time:.2f}ms, FPS: {fps:.2f}")
+        print(f"No face detected. Detection time: {detection_time:.2f}ms, FPS: {fps:.2f}")
     else:
         total_time = detection_time + alignment_time + embedding_time
         print(f"Detection: {detection_time:.2f}ms, Alignment: {alignment_time:.2f}ms, Embedding: {embedding_time:.2f}ms, Total: {total_time:.2f}ms, FPS: {fps:.2f}")
