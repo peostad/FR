@@ -8,63 +8,40 @@ import os
 import cv2
 import time
 from PIL import Image
-from facenet_pytorch import MTCNN
-from torchvision.transforms.functional import to_tensor
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
 # Check for GPU availability
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
 print(f"Using device: {device}")
 
-# Initialize MTCNN
-mtcnn = MTCNN(keep_all=True, device='cpu')
-
-def align_face(image, landmarks):
-    left_eye, right_eye = landmarks[0], landmarks[1]
-    
-    # Calculate angle
-    dY = right_eye[1] - left_eye[1]
-    dX = right_eye[0] - left_eye[0]
-    angle = np.degrees(np.arctan2(dY, dX)) - 180
-
-    # Get the center point between the eyes
-    center = ((left_eye[0] + right_eye[0]) // 2, (left_eye[1] + right_eye[1]) // 2)
-
-    # Get the rotation matrix
-    M = cv2.getRotationMatrix2D(center, angle, 1)
-
-    # Rotate the image
-    aligned_face = cv2.warpAffine(image, M, (image.shape[1], image.shape[0]), flags=cv2.INTER_CUBIC)
-
-    return aligned_face
+# Load YOLOv5 model
+yolo_model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True).to(device)
+yolo_model.eval()
 
 def get_embedding(image):
-    # Convert image to RGB (MTCNN expects RGB images)
-    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    
-    # Face Detection and Landmark Detection
+    # Face Detection
     detection_start = time.time()
-    boxes, probs, landmarks = mtcnn.detect(Image.fromarray(image_rgb), landmarks=True)
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    results = yolo_model(image_rgb)
     detection_time = (time.time() - detection_start) * 1000
     
-    if boxes is None or len(boxes) == 0:
-        logging.warning("No face detected")
+    # Filter for person class (index 0 in COCO dataset)
+    person_detections = results.xyxy[0][results.xyxy[0][:, -1] == 0]
+    
+    if len(person_detections) == 0:
+        logging.warning("No person detected")
         return None, detection_time, None, None
     
-    # Face Alignment (using the first detected face)
+    # Face Alignment (using the first detected person)
     alignment_start = time.time()
-    box = boxes[0]
-    landmark = landmarks[0]
-    x1, y1, x2, y2 = map(int, box)
+    box = person_detections[0].cpu().numpy()
+    x1, y1, x2, y2 = map(int, box[:4])
     face_img = image[y1:y2, x1:x2]
-    aligned_face = align_face(face_img, landmark)
     
     # Resize and prepare for the embedding model
-    aligned_face_pil = Image.fromarray(cv2.cvtColor(aligned_face, cv2.COLOR_BGR2RGB))
-    face_tensor = transform(aligned_face_pil).unsqueeze(0).to(device)
+    face_tensor = transform(Image.fromarray(cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB))).unsqueeze(0).to(device)
     alignment_time = (time.time() - alignment_start) * 1000
     
     # Face Embedding
