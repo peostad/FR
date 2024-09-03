@@ -1,5 +1,8 @@
+##FPS and measurement time of the embedding.
 import torch
 from torchvision import transforms
+from EdgeFace.face_alignment import align
+from facenet_pytorch import MTCNN
 from EdgeFace.backbones import get_model
 import numpy as np
 import logging
@@ -12,54 +15,43 @@ from PIL import Image
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
-# Check for GPU availability
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-print(f"Using device: {device}")
-
-# Load OpenCV's face detector
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+# Initialize MTCNN for face detection
+mtcnn = MTCNN(keep_all=False, device='cpu')
 
 def get_embedding(image):
     start_time = time.time()
     
-    # Convert image to grayscale for face detection
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    
-    # Detect faces
-    faces = face_cascade.detectMultiScale(gray, 1.1, 4)
-    
-    if len(faces) == 0:
+    # Detect and align the face using MTCNN
+    boxes, _ = mtcnn.detect(image)
+    if boxes is None:
         logging.warning("No face detected")
-        return None, (time.time() - start_time) * 1000
-    
-    # Get the largest face
-    (x, y, w, h) = max(faces, key=lambda f: f[2] * f[3])
+        return None, (time.time() - start_time) * 1000  # Return None for embedding and time taken in ms
     
     # Crop the face from the image
-    face = image[y:y+h, x:x+w]
-    
-    # Convert the face to a tensor and move to GPU
-    face_tensor = transform(Image.fromarray(cv2.cvtColor(face, cv2.COLOR_BGR2RGB))).unsqueeze(0).to(device)
+    x1, y1, x2, y2 = map(int, boxes[0])
+    face = image[y1:y2, x1:x2]
+    aligned = align.get_aligned_face(face)
+    # Convert the face to a tensor
+    #face_pil = Image.fromarray(face)
+    transformed_input = transform(aligned).unsqueeze(0)
     
     # Get the embedding
     with torch.no_grad():
-        embedding = model(face_tensor)
+        embedding = model(transformed_input)
     
     embedding_time = (time.time() - start_time) * 1000  # Convert to milliseconds
-    return embedding.squeeze().cpu(), embedding_time  # Move embedding back to CPU
+    return embedding.squeeze(), embedding_time
 
 arch = "edgeface_xs_gamma_06"  # or edgeface_xs_gamma_06
 model = get_model(arch)
-model = model.to(device)
 
 transform = transforms.Compose([
-    transforms.Resize((112, 112)),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
 ])
 
 checkpoint_path = f'EdgeFace/checkpoints/{arch}.pt'
-model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+model.load_state_dict(torch.load(checkpoint_path, map_location='cuda:0'))
 model.eval()
 
 # Paths for the first image
@@ -71,9 +63,10 @@ if image1 is None:
     logging.error(f"Failed to load image: {image_path1}")
     exit()
 
-embedding1, _ = get_embedding(image1)
+image1_rgb = cv2.cvtColor(image1, cv2.COLOR_BGR2RGB)
+embedding1, _ = get_embedding(image1_rgb)
 if embedding1 is None:
-    logging.error("No face detected in the first image. Please use an image with a clear face.")
+    logging.error("No face detected in the first image")
     exit()
 
 embedding1 = F.normalize(embedding1, p=2, dim=0).numpy()
@@ -93,7 +86,8 @@ while True:
         logging.error("Failed to capture image from camera")
         break
     
-    embedding2, embedding_time = get_embedding(frame)
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    embedding2, embedding_time = get_embedding(frame_rgb)
     
     # Calculate FPS
     frame_count += 1
