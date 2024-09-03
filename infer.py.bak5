@@ -1,3 +1,4 @@
+#RUN ON GPU
 import torch
 from torchvision import transforms
 from EdgeFace.backbones import get_model
@@ -16,37 +17,37 @@ logging.basicConfig(level=logging.INFO)
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
-# Load YOLOv5 model
-yolo_model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True).to(device)
+# Load OpenCV's face detector
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
 def get_embedding(image):
-    # Face Detection
-    detection_start = time.time()
-    results = yolo_model(image)
-    detection_time = (time.time() - detection_start) * 1000
+    start_time = time.time()
     
-    # Filter for person class (index 0 in COCO dataset)
-    person_detections = results.xyxy[0][results.xyxy[0][:, -1] == 0]
+    # Convert image to grayscale for face detection
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     
-    if len(person_detections) == 0:
-        logging.warning("No person detected")
-        return None, detection_time, None, None
+    # Detect faces
+    faces = face_cascade.detectMultiScale(gray, 1.1, 4)
     
-    # Face Alignment (Cropping) - using the first detected person
-    alignment_start = time.time()
-    box = person_detections[0].cpu().numpy()
-    x1, y1, x2, y2 = map(int, box[:4])
-    face_img = image[y1:y2, x1:x2]
-    face_tensor = transform(Image.fromarray(cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB))).unsqueeze(0).to(device)
-    alignment_time = (time.time() - alignment_start) * 1000
+    if len(faces) == 0:
+        logging.warning("No face detected")
+        return None, (time.time() - start_time) * 1000
     
-    # Face Embedding
-    embedding_start = time.time()
+    # Get the largest face
+    (x, y, w, h) = max(faces, key=lambda f: f[2] * f[3])
+    
+    # Crop the face from the image
+    face = image[y:y+h, x:x+w]
+    
+    # Convert the face to a tensor and move to GPU
+    face_tensor = transform(Image.fromarray(cv2.cvtColor(face, cv2.COLOR_BGR2RGB))).unsqueeze(0).to(device)
+    
+    # Get the embedding
     with torch.no_grad():
         embedding = model(face_tensor)
-    embedding_time = (time.time() - embedding_start) * 1000
     
-    return embedding.squeeze().cpu(), detection_time, alignment_time, embedding_time
+    embedding_time = (time.time() - start_time) * 1000  # Convert to milliseconds
+    return embedding.squeeze().cpu(), embedding_time  # Move embedding back to CPU
 
 arch = "edgeface_xs_gamma_06"  # or edgeface_xs_gamma_06
 model = get_model(arch)
@@ -71,9 +72,9 @@ if image1 is None:
     logging.error(f"Failed to load image: {image_path1}")
     exit()
 
-embedding1, _, _, _ = get_embedding(image1)
+embedding1, _ = get_embedding(image1)
 if embedding1 is None:
-    logging.error("No person detected in the first image. Please use an image with a clear face.")
+    logging.error("No face detected in the first image. Please use an image with a clear face.")
     exit()
 
 embedding1 = F.normalize(embedding1, p=2, dim=0).numpy()
@@ -93,7 +94,7 @@ while True:
         logging.error("Failed to capture image from camera")
         break
     
-    embedding2, detection_time, alignment_time, embedding_time = get_embedding(frame)
+    embedding2, embedding_time = get_embedding(frame)
     
     # Calculate FPS
     frame_count += 1
@@ -103,12 +104,8 @@ while True:
         frame_count = 0
         start_time = time.time()
     
-    # Display FPS on the frame
-    cv2.putText(frame, f"FPS: {fps:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-    cv2.putText(frame, f"Det: {detection_time:.2f}ms", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-    
     if embedding2 is None:
-        cv2.putText(frame, "No person detected", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        cv2.putText(frame, "No face detected", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
     else:
         embedding2 = F.normalize(embedding2, p=2, dim=0).numpy()
         
@@ -117,28 +114,26 @@ while True:
         similarity_score = similarity.item()
         
         # Display the similarity score on the frame
-        cv2.putText(frame, f"Similarity: {similarity_score:.2f}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        cv2.putText(frame, f"Similarity: {similarity_score:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         
         # Optionally, you can set a threshold for face matching
         threshold = 0.7  # This is an example threshold, adjust as needed
         if similarity_score > threshold:
-            cv2.putText(frame, "Match!", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.putText(frame, "Match!", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         else:
-            cv2.putText(frame, "No Match", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-        
-        # Display alignment and embedding times
-        cv2.putText(frame, f"Align: {alignment_time:.2f}ms", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-        cv2.putText(frame, f"Embed: {embedding_time:.2f}ms", (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+            cv2.putText(frame, "No Match", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    
+    # Display FPS on the frame
+    cv2.putText(frame, f"FPS: {fps:.2f}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
     
     # Display the frame
     cv2.imshow('Live Camera Feed', frame)
     
     # Print debugging information in the terminal
     if embedding2 is None:
-        print(f"No person detected. Detection time: {detection_time:.2f}ms, FPS: {fps:.2f}")
+        print(f"No face detected. Time taken: {embedding_time:.2f}ms, FPS: {fps:.2f}")
     else:
-        total_time = detection_time + alignment_time + embedding_time
-        print(f"Detection: {detection_time:.2f}ms, Alignment: {alignment_time:.2f}ms, Embedding: {embedding_time:.2f}ms, Total: {total_time:.2f}ms, FPS: {fps:.2f}")
+        print(f"Embedding time: {embedding_time:.2f}ms, FPS: {fps:.2f}")
     
     # Break the loop if 'q' is pressed
     if cv2.waitKey(1) & 0xFF == ord('q'):
