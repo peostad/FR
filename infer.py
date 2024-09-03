@@ -15,7 +15,8 @@ from torchvision.transforms.functional import to_tensor
 logging.basicConfig(level=logging.INFO)
 
 # Check for GPU availability
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+#device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+device = 'cpu'
 print(f"Using device: {device}")
 
 # Initialize MTCNN
