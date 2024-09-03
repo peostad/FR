@@ -1,6 +1,4 @@
 /.venv
-/compare.py
-/EdgeFace
 /EdgeFace copy
 /embeddings
 /enrollment_img.py
@@ -9,11 +7,6 @@
 /face_embeddings_infer.npz
 /face_embeddings_vid.npz
 /infer
-/infer.py.bak1
-/infer.py.bak2
-/infer.py.bak3
-/infer.py.org
 /main.py
 /pey1.jpg
-/requirements.txt
 /verification_embeddings

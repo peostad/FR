@@ -1,0 +1,91 @@
+##Convert the image to tensor and get the embedding
+import torch
+from torchvision import transforms
+from EdgeFace.face_alignment import align
+from EdgeFace.backbones import get_model
+import numpy as np
+import logging
+import torch.nn.functional as F
+import os
+import cv2
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+
+def get_embedding(image_path):
+    # Read the image using OpenCV
+    image = cv2.imread(image_path)
+    if image is None:
+        logging.error(f"Failed to load image: {image_path}")
+        return None
+    
+    # Convert the image from BGR to RGB
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    
+    # Align the face using the face alignment function
+    aligned = align.get_aligned_face(image_rgb)
+    
+    # Convert the aligned face to a tensor
+    transformed_input = transform(aligned).unsqueeze(0)
+    
+    # Get the embedding
+    with torch.no_grad():
+        embedding = model(transformed_input)
+    
+    return embedding.squeeze()
+
+arch = "edgeface_xs_gamma_06"  # or edgeface_xs_gamma_06
+model = get_model(arch)
+
+transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+])
+
+checkpoint_path = f'EdgeFace/checkpoints/{arch}.pt'
+model.load_state_dict(torch.load(checkpoint_path, map_location='cpu'))
+model.eval()
+
+# Paths for images
+image_paths = ['EdgeFace/checkpoints/pey1.jpg', 'EdgeFace/checkpoints/pey2.jpg']  # Add more paths as needed
+
+# Directory to save embeddings
+os.makedirs('embeddings', exist_ok=True)
+
+for image_path in image_paths:
+    # Get embedding for the image
+    embedding = get_embedding(image_path)
+    
+    if embedding is None:
+        continue
+    
+    # Normalize embedding
+    embedding = F.normalize(embedding, p=2, dim=0).numpy()
+    
+    # Log the shape and data type of the embedding
+    logging.info(f"Embedding shape: {embedding.shape}, data type: {embedding.dtype}")
+    
+    # Save the embedding to a separate .npz file
+    base_name = os.path.basename(image_path)
+    file_name = os.path.splitext(base_name)[0] + '_embedding.npz'
+    np.savez(os.path.join('embeddings', file_name), embedding=embedding)
+    logging.info(f"Saved embedding to 'embeddings/{file_name}'")
+
+# Example: Compute cosine similarity between the first two embeddings
+embedding1 = np.load(os.path.join('embeddings', 'pey1_embedding.npz'))['embedding']
+embedding2 = np.load(os.path.join('embeddings', 'pey2_embedding.npz'))['embedding']
+
+similarity = torch.nn.functional.cosine_similarity(torch.tensor(embedding1).unsqueeze(0), torch.tensor(embedding2).unsqueeze(0))
+
+print(f"Cosine similarity between the two images: {similarity.item()}")
+
+# Optionally, you can set a threshold for face matching
+threshold = 0.7  # This is an example threshold, adjust as needed
+if similarity > threshold:
+    print("The faces match!")
+else:
+    print("The faces do not match.")
+
+
+
+

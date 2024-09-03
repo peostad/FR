@@ -1,0 +1,50 @@
+#Original version
+import torch
+from torchvision import transforms
+from EdgeFace.face_alignment import align
+from EdgeFace.backbones import get_model
+import numpy as np
+
+
+def get_embedding(image_path):
+    aligned = align.get_aligned_face(image_path)
+    transformed_input = transform(aligned).unsqueeze(0)
+    with torch.no_grad():
+        embedding = model(transformed_input)
+    return embedding.squeeze()
+
+arch = "edgeface_xs_gamma_06"  # or edgeface_xs_gamma_06
+model = get_model(arch)
+
+transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+])
+
+checkpoint_path = f'EdgeFace/checkpoints/{arch}.pt'
+model.load_state_dict(torch.load(checkpoint_path, map_location='cpu'))
+model.eval()
+
+# Paths for two images
+image_path1 = 'EdgeFace/checkpoints/pey1.jpg'
+image_path2 = 'EdgeFace/checkpoints/pey2.jpg'  # Replace with actual path
+
+# Get embeddings for both images
+embedding1 = get_embedding(image_path1)
+embedding2 = get_embedding(image_path2)
+
+# Compute cosine similarity
+similarity = torch.nn.functional.cosine_similarity(embedding1.unsqueeze(0), embedding2.unsqueeze(0))
+
+print(f"Cosine similarity between the two images: {similarity.item()}")
+
+# Optionally, you can set a threshold for face matching
+threshold = 0.7  # This is an example threshold, adjust as needed
+if similarity > threshold:
+    print("The faces match!")
+else:
+    print("The faces do not match.")
+
+
+
+
