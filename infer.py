@@ -17,7 +17,7 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
 # Initialize MTCNN
-mtcnn = MTCNN(keep_all=True, device=device)
+mtcnn = MTCNN(keep_all=True, device='cpu')
 
 # Load ONNX model
 onnx_path = "edgeface_xs_gamma_06.onnx"
@@ -31,7 +31,7 @@ def get_embedding(image):
     
     if boxes is None or len(boxes) == 0:
         logging.warning("No face detected")
-        return None, detection_time, None, None, None
+        return None, detection_time, None, None, None, None
     
     # Face Alignment (using the first detected face)
     alignment_start = time.time()
@@ -53,7 +53,7 @@ def get_embedding(image):
     embedding = ort_session.run(None, ort_inputs)[0]
     embedding_time = (time.time() - embedding_start) * 1000
     
-    return embedding.squeeze(), detection_time, alignment_time, embedding_time, (x1, y1, x2, y2)
+    return embedding.squeeze(), detection_time, alignment_time, embedding_time, (x1, y1, x2, y2), face_pil
 
 # Paths for the first image
 image_path1 = 'EdgeFace/checkpoints/pey1.jpg'
@@ -64,7 +64,7 @@ if image1 is None:
     logging.error(f"Failed to load image: {image_path1}")
     exit()
 
-embedding1, _, _, _, _ = get_embedding(image1)
+embedding1, _, _, _, _, _ = get_embedding(image1)
 if embedding1 is None:
     logging.error("No face detected in the first image. Please use an image with a clear face.")
     exit()
@@ -86,7 +86,7 @@ while True:
         logging.error("Failed to capture image from camera")
         break
     
-    embedding2, detection_time, alignment_time, embedding_time, bbox = get_embedding(frame)
+    embedding2, detection_time, alignment_time, embedding_time, bbox, aligned_face = get_embedding(frame)
     
     # Calculate FPS
     frame_count += 1
@@ -131,8 +131,13 @@ while True:
         x1, y1, x2, y2 = bbox
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
         cv2.putText(frame, match_text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+        
+        # Display aligned face in a separate window
+        aligned_face_np = np.array(aligned_face)
+        aligned_face_bgr = cv2.cvtColor(aligned_face_np, cv2.COLOR_RGB2BGR)
+        cv2.imshow('Aligned Face', aligned_face_bgr)
     
-    # Display the frame
+    # Display the main frame
     cv2.imshow('Live Camera Feed', frame)
     
     # Print debugging information in the terminal
@@ -148,7 +153,3 @@ while True:
 
 cap.release()
 cv2.destroyAllWindows()
-
-
-
-
