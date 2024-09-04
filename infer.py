@@ -3,6 +3,7 @@ import onnxruntime
 import numpy as np
 import logging
 import torch.nn.functional as F
+import os
 import cv2
 import time
 from PIL import Image
@@ -34,7 +35,7 @@ def get_embedding(image):
     
     if len(person_detections) == 0:
         logging.warning("No person detected")
-        return None, detection_time, None, None
+        return None, detection_time, None, None, None
     
     # Face Alignment (using the first detected person)
     alignment_start = time.time()
@@ -56,7 +57,7 @@ def get_embedding(image):
     embedding = ort_session.run(None, ort_inputs)[0]
     embedding_time = (time.time() - embedding_start) * 1000
     
-    return embedding.squeeze(), detection_time, alignment_time, embedding_time
+    return embedding.squeeze(), detection_time, alignment_time, embedding_time, (x1, y1, x2, y2)
 
 # Paths for the first image
 image_path1 = 'EdgeFace/checkpoints/pey1.jpg'
@@ -67,7 +68,7 @@ if image1 is None:
     logging.error(f"Failed to load image: {image_path1}")
     exit()
 
-embedding1, _, _, _ = get_embedding(image1)
+embedding1, _, _, _, _ = get_embedding(image1)
 if embedding1 is None:
     logging.error("No face detected in the first image. Please use an image with a clear face.")
     exit()
@@ -89,7 +90,7 @@ while True:
         logging.error("Failed to capture image from camera")
         break
     
-    embedding2, detection_time, alignment_time, embedding_time = get_embedding(frame)
+    embedding2, detection_time, alignment_time, embedding_time, bbox = get_embedding(frame)
     
     # Calculate FPS
     frame_count += 1
@@ -118,13 +119,22 @@ while True:
         # Optionally, you can set a threshold for face matching
         threshold = 0.7  # This is an example threshold, adjust as needed
         if similarity_score > threshold:
-            cv2.putText(frame, "Match!", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            match_text = "Match!"
+            color = (0, 255, 0)  # Green
         else:
-            cv2.putText(frame, "No Match", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            match_text = "No Match"
+            color = (0, 0, 255)  # Red
+        
+        cv2.putText(frame, match_text, (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
         
         # Display alignment and embedding times
         cv2.putText(frame, f"Align: {alignment_time:.2f}ms", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
         cv2.putText(frame, f"Embed: {embedding_time:.2f}ms", (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+        
+        # Draw bounding box
+        x1, y1, x2, y2 = bbox
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+        cv2.putText(frame, match_text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
     
     # Display the frame
     cv2.imshow('Live Camera Feed', frame)
