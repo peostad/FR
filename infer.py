@@ -1,10 +1,8 @@
 import torch
-from torchvision import transforms
-from EdgeFace.backbones import get_model
+import onnxruntime
 import numpy as np
 import logging
 import torch.nn.functional as F
-import os
 import cv2
 import time
 from PIL import Image
@@ -19,6 +17,10 @@ print(f"Using device: {device}")
 # Load YOLOv5 model
 yolo_model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True).to(device)
 yolo_model.eval()
+
+# Load ONNX model
+onnx_path = "edgeface_xs_gamma_06.onnx"
+ort_session = onnxruntime.InferenceSession(onnx_path, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
 
 def get_embedding(image):
     # Face Detection
@@ -41,30 +43,20 @@ def get_embedding(image):
     face_img = image[y1:y2, x1:x2]
     
     # Resize and prepare for the embedding model
-    face_tensor = transform(Image.fromarray(cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB))).unsqueeze(0).to(device)
+    face_pil = Image.fromarray(cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB))
+    face_pil = face_pil.resize((112, 112))
+    face_np = np.array(face_pil).transpose((2, 0, 1)).astype(np.float32) / 255.0
+    face_np = (face_np - 0.5) / 0.5
+    face_np = np.expand_dims(face_np, axis=0)
     alignment_time = (time.time() - alignment_start) * 1000
     
-    # Face Embedding
+    # Face Embedding using ONNX
     embedding_start = time.time()
-    with torch.no_grad():
-        embedding = model(face_tensor)
+    ort_inputs = {ort_session.get_inputs()[0].name: face_np}
+    embedding = ort_session.run(None, ort_inputs)[0]
     embedding_time = (time.time() - embedding_start) * 1000
     
-    return embedding.squeeze().cpu(), detection_time, alignment_time, embedding_time
-
-arch = "edgeface_xs_gamma_06"  # or edgeface_xs_gamma_06
-model = get_model(arch)
-model = model.to(device)
-
-transform = transforms.Compose([
-    transforms.Resize((112, 112)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
-])
-
-checkpoint_path = f'EdgeFace/checkpoints/{arch}.pt'
-model.load_state_dict(torch.load(checkpoint_path, map_location=device))
-model.eval()
+    return embedding.squeeze(), detection_time, alignment_time, embedding_time
 
 # Paths for the first image
 image_path1 = 'EdgeFace/checkpoints/pey1.jpg'
@@ -80,7 +72,7 @@ if embedding1 is None:
     logging.error("No face detected in the first image. Please use an image with a clear face.")
     exit()
 
-embedding1 = F.normalize(embedding1, p=2, dim=0).numpy()
+embedding1 = F.normalize(torch.from_numpy(embedding1), p=2, dim=0).numpy()
 logging.info(f"Embedding 1 shape: {embedding1.shape}, data type: {embedding1.dtype}")
 
 # Initialize video capture for live camera feed
@@ -114,10 +106,10 @@ while True:
     if embedding2 is None:
         cv2.putText(frame, "No face detected", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
     else:
-        embedding2 = F.normalize(embedding2, p=2, dim=0).numpy()
+        embedding2 = F.normalize(torch.from_numpy(embedding2), p=2, dim=0).numpy()
         
         # Compute cosine similarity between the first image and the current frame
-        similarity = torch.nn.functional.cosine_similarity(torch.tensor(embedding1).unsqueeze(0), torch.tensor(embedding2).unsqueeze(0))
+        similarity = np.dot(embedding1, embedding2) / (np.linalg.norm(embedding1) * np.linalg.norm(embedding2))
         similarity_score = similarity.item()
         
         # Display the similarity score on the frame
