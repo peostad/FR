@@ -7,6 +7,7 @@ import os
 import cv2
 import time
 from PIL import Image
+from facenet_pytorch import MTCNN
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -15,9 +16,8 @@ logging.basicConfig(level=logging.INFO)
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
-# Load YOLOv5 model
-yolo_model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True).to(device)
-yolo_model.eval()
+# Initialize MTCNN
+mtcnn = MTCNN(keep_all=True, device=device)
 
 # Load ONNX model
 onnx_path = "edgeface_xs_gamma_06.onnx"
@@ -26,21 +26,17 @@ ort_session = onnxruntime.InferenceSession(onnx_path, providers=['CUDAExecutionP
 def get_embedding(image):
     # Face Detection
     detection_start = time.time()
-    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    results = yolo_model(image_rgb)
+    boxes, _ = mtcnn.detect(Image.fromarray(image))
     detection_time = (time.time() - detection_start) * 1000
     
-    # Filter for person class (index 0 in COCO dataset)
-    person_detections = results.xyxy[0][results.xyxy[0][:, -1] == 0]
-    
-    if len(person_detections) == 0:
-        logging.warning("No person detected")
+    if boxes is None or len(boxes) == 0:
+        logging.warning("No face detected")
         return None, detection_time, None, None, None
     
-    # Face Alignment (using the first detected person)
+    # Face Alignment (using the first detected face)
     alignment_start = time.time()
-    box = person_detections[0].cpu().numpy()
-    x1, y1, x2, y2 = map(int, box[:4])
+    box = boxes[0]
+    x1, y1, x2, y2 = map(int, box)
     face_img = image[y1:y2, x1:x2]
     
     # Resize and prepare for the embedding model
