@@ -20,7 +20,7 @@ yolo_model.eval()
 
 # Load ONNX model
 onnx_path = "edgeface_xs_gamma_06.onnx"
-ort_session = onnxruntime.InferenceSession(onnx_path, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+ort_session = onnxruntime.InferenceSession(onnx_path, providers=['CPUExecutionProvider'])
 
 def get_embedding(image):
     # Face Detection
