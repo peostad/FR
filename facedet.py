@@ -10,7 +10,7 @@ class FaceDetector:
     def load_network(self, model):
         device = ort.get_device()
         print(f'onnxruntime device is {device}')
-        cuda = True if device == 'GPU' else False
+        cuda = True if device == 'cuda:0' else False
         print(f'Cuda is {cuda}')
         try:
             providers = ['CUDAExecutionProvider'] if cuda else ['CPUExecutionProvider']
