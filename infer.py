@@ -32,19 +32,31 @@ def get_embedding(image):
     return embedding.squeeze(), embedding_time
 
 def main():
-
-
     model = FaceDetector()
 
     cap = cv2.VideoCapture(0)  # 0 for default camera
+
+    frame_count = 0
+    start_time = time.time()
+    fps = 0  # Initialize fps variable
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        faces = model.infer(frame, threshold=0.3)
+        frame_count += 1
+        if frame_count % 10 == 0:
+            end_time = time.time()
+            fps = frame_count / (end_time - start_time)
+            frame_count = 0
+            start_time = time.time()
 
+        detection_start = time.time()
+        faces = model.infer(frame, threshold=0.3)
+        detection_time = (time.time() - detection_start) * 1000
+
+        total_embedding_time = 0
         for face in faces:
             x1, y1, x2, y2 = face["points"]
             confidence = float(face["confidence"])
@@ -56,16 +68,20 @@ def main():
             face_img = frame[y1:y2, x1:x2]
             cv2.imshow("Face Detection", face_img)
             embedding, embedding_time = get_embedding(face_img)
+            total_embedding_time += embedding_time
             if embedding is not None:
                 # Display times
                 cv2.putText(frame, f"Embed: {embedding_time:.2f}ms", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
+        # Display detection time, total embedding time, and FPS
+        cv2.putText(frame, f"Detect: {detection_time:.2f}ms", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.putText(frame, f"Total Embed: {total_embedding_time:.2f}ms", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.putText(frame, f"FPS: {fps:.2f}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
         cv2.imshow('Face Detection and Recognition', frame)
         
-
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-
 
     cap.release()
     cv2.destroyAllWindows()
