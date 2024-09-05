@@ -8,8 +8,7 @@ import os
 import cv2
 import time
 from PIL import Image
-import face_alignment
-from face_alignment import LandmarksType
+from facenet_pytorch import MTCNN
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -18,65 +17,31 @@ logging.basicConfig(level=logging.INFO)
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
-# Initialize face alignment
-fa = face_alignment.FaceAlignment(LandmarksType.TWO_D, device=str(device), face_detector='sfd')
+# Initialize MTCNN
+mtcnn = MTCNN(keep_all=True, device='cpu')
 
 # Load ONNX model
 onnx_path = "edgeface_xs_gamma_06.onnx"
 ort_session = onnxruntime.InferenceSession(onnx_path, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
 
-def align_face(image, landmarks):
-    if len(landmarks) == 0:
-        return image  # Return original image if no landmarks
-
-    landmarks = np.array(landmarks)
-    if landmarks.shape[0] < 48:
-        return image  # Return original image if not enough landmarks
-
-    left_eye = landmarks[36:42].mean(axis=0)
-    right_eye = landmarks[42:48].mean(axis=0)
-    
-    # Check if eye positions are valid
-    if np.isnan(left_eye).any() or np.isnan(right_eye).any():
-        return image
-
-    # Calculate angle
-    dY = right_eye[1] - left_eye[1]
-    dX = right_eye[0] - left_eye[0]
-    angle = np.degrees(np.arctan2(dY, dX)) - 180
-
-    # Get the center point between the eyes
-    center = tuple(map(int, ((left_eye[0] + right_eye[0]) // 2, (left_eye[1] + right_eye[1]) // 2)))
-
-    # Get the rotation matrix
-    M = cv2.getRotationMatrix2D(center, angle, 1)
-
-    # Apply the rotation
-    aligned_face = cv2.warpAffine(image, M, (image.shape[1], image.shape[0]), flags=cv2.INTER_CUBIC)
-
-    return aligned_face
-
 def get_embedding(image):
-    # Face Detection and Landmark Detection
+    # Face Detection
     detection_start = time.time()
-    preds = fa.get_landmarks_from_image(image, return_bboxes=True)
+    boxes, _ = mtcnn.detect(Image.fromarray(image))
     detection_time = (time.time() - detection_start) * 1000
     
-    if preds is None or len(preds) == 0:
+    if boxes is None or len(boxes) == 0:
         logging.warning("No face detected")
         return None, detection_time, None, None, None, None
     
-    landmarks = preds[0]
-    bbox = fa.face_detector.detect_from_image(image)[0]
-    
-    # Face Alignment
+    # Face Alignment (using the first detected face)
     alignment_start = time.time()
-    x1, y1, x2, y2, _ = map(int, bbox)  # Unpack 5 values, ignoring the last one
+    box = boxes[0]
+    x1, y1, x2, y2 = map(int, box)
     face_img = image[y1:y2, x1:x2]
-    aligned_face = align_face(face_img, landmarks)
     
     # Resize and prepare for the embedding model
-    face_pil = Image.fromarray(cv2.cvtColor(aligned_face, cv2.COLOR_BGR2RGB))
+    face_pil = Image.fromarray(cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB))
     face_pil = face_pil.resize((112, 112))
     face_np = np.array(face_pil).transpose((2, 0, 1)).astype(np.float32) / 255.0
     face_np = (face_np - 0.5) / 0.5
