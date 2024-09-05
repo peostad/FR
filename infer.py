@@ -19,7 +19,7 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
 # Initialize face alignment
-fa = face_alignment.FaceAlignment(LandmarksType.TWO_D, device=str(device), face_detector='sfd')
+fa = face_alignment.FaceAlignment(LandmarksType.TWO_D, device=str(device), face_detector='dlib')
 
 # Load ONNX model
 onnx_path = "edgeface_xs_gamma_06.onnx"
@@ -59,7 +59,7 @@ def align_face(image, landmarks):
 def get_embedding(image):
     # Face Detection and Landmark Detection
     detection_start = time.time()
-    preds = fa.get_landmarks_from_image(image, return_bboxes=True)
+    preds = fa.get_landmarks_from_image(image)
     detection_time = (time.time() - detection_start) * 1000
     
     if preds is None or len(preds) == 0:
@@ -67,11 +67,18 @@ def get_embedding(image):
         return None, detection_time, None, None, None, None
     
     landmarks = preds[0]
-    bbox = fa.face_detector.detect_from_image(image)[0]
+    
+    # Use face detector to get bounding box
+    bboxes = fa.face_detector.detect_from_image(image)
+    if len(bboxes) == 0:
+        logging.warning("No face bounding box detected")
+        return None, detection_time, None, None, None, None
+    
+    bbox = bboxes[0]
     
     # Face Alignment
     alignment_start = time.time()
-    x1, y1, x2, y2, _ = map(int, bbox)  # Unpack 5 values, ignoring the last one
+    x1, y1, x2, y2 = map(int, bbox[:4])  # Unpack 4 values for the bounding box
     face_img = image[y1:y2, x1:x2]
     aligned_face = align_face(face_img, landmarks)
     
