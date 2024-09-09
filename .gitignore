@@ -2,7 +2,6 @@
 /EdgeFace copy
 /embeddings
 /enrollment_img.py
-/enrollment_vid.py
 /faces
 /face_embeddings_infer.npz
 /face_embeddings_vid.npz
@@ -11,3 +10,5 @@
 /pey1.jpg
 /verification_embeddings
 /yolov5s.pt
+/backup
+/_pycache_

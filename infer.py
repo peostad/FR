@@ -1,3 +1,16 @@
+'''
+This is the main code for face detection and verification
+It uses YoloV7 for face detection and the EdgeFace model for face verification
+Both models are in ONNX format and use CUDA for GPU acceleration
+
+TODO:
+1. Add the code for the face alignment
+
+
+Author: Peyman Ostad
+Date: 2024-09-06+
+'''
+
 import cv2
 import numpy as np
 import onnxruntime as ort
@@ -5,10 +18,13 @@ import torch
 import time
 from PIL import Image
 from facedet import FaceDetector
+import logging
+import argparse
 
 # Suppress onnxruntime warnings
-ort.set_default_logger_severity(3)
-
+ort.set_default_logger_verbosity(3)
+# Configure logging
+logging.basicConfig(level=logging.INFO)
 
 # Existing code from infer.py
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -29,9 +45,40 @@ def get_embedding(image):
     embedding = ort_session.run(None, ort_inputs)[0]
     embedding_time = (time.time() - embedding_start) * 1000
     
-    return embedding.squeeze(), embedding_time
+    # Normalize the embedding
+    embedding = embedding.squeeze()
+    embedding = embedding / np.linalg.norm(embedding)
+    
+    # Log embedding information
+    # logging.info(f"Embedding shape: {embedding.shape}")
+    # logging.info(f"Embedding dtype: {embedding.dtype}")
+    # logging.info(f"Embedding norm: {np.linalg.norm(embedding)}")
+    
+    return embedding, embedding_time
+
+def generate_embedding_from_file(image_path):
+    image = cv2.imread(image_path)
+    face_detector = FaceDetector()
+    faces = face_detector.infer(image, threshold=0.3)
+    if faces:
+        face = faces[0]
+        x1, y1, x2, y2 = face["points"]
+        face_img = image[y1:y2, x1:x2]
+        embedding, _ = get_embedding(face_img)
+        return embedding
+    return None
+
+def load_embedding_from_npz(npz_path):
+    with np.load(npz_path) as data:
+        embedding = data['embeddings'][0]  # Assuming we want the first embedding
+    return embedding
 
 def main():
+    parser = argparse.ArgumentParser(description='Face Detection and Recognition')
+    parser.add_argument('--npz', type=str, help='Path to .npz file containing embeddings')
+    parser.add_argument('--image', type=str, help='Path to image file for generating embedding')
+    args = parser.parse_args()
+
     model = FaceDetector()
 
     cap = cv2.VideoCapture(0)  # 0 for default camera
@@ -39,6 +86,30 @@ def main():
     frame_count = 0
     start_time = time.time()
     fps = 0  # Initialize fps variable
+    
+    # Load pey1_embedding based on arguments
+    if args.npz:
+        source_embedding = load_embedding_from_npz(args.npz)
+    elif args.image:
+        source_embedding = generate_embedding_from_file(args.image)
+    else:
+        source_embedding = generate_embedding_from_file("EdgeFace/checkpoints/pey1.jpg")
+    
+    # Normalize source_embedding if it's not already normalized
+    source_embedding = source_embedding / np.linalg.norm(source_embedding)
+    
+
+    
+    # Convert source_embedding to PyTorch tensor
+    source_embedding_tensor = torch.from_numpy(source_embedding).to(device)
+    
+    # Check and log the format of source_embedding
+    # logging.info(f"source_embedding shape: {source_embedding.shape}")
+    # logging.info(f"source_embedding dtype: {source_embedding.dtype}")
+    # logging.info(f"source_embedding norm: {np.linalg.norm(source_embedding)}")
+    # logging.info(f"source_embedding first 5 values: {source_embedding[:5]}")
+    
+    previous_embedding = None
 
     while True:
         ret, frame = cap.read()
@@ -70,13 +141,54 @@ def main():
             embedding, embedding_time = get_embedding(face_img)
             total_embedding_time += embedding_time
             if embedding is not None:
+                # Log current frame embedding information
+                # logging.info(f"Current frame embedding shape: {embedding.shape}")
+                # logging.info(f"Current frame embedding dtype: {embedding.dtype}")
+                # logging.info(f"Current frame embedding norm: {np.linalg.norm(embedding)}")
+                
+                # # Log first 5 values of current frame embedding
+                # logging.info(f"Current frame embedding first 5 values: {embedding[:5]}")
+                
+                # Convert current frame embedding to PyTorch tensor
+                embedding_tensor = torch.from_numpy(embedding).to(device)
+                
+                # Compare embeddings using PyTorch cosine similarity
+                similarity = torch.nn.functional.cosine_similarity(source_embedding_tensor.unsqueeze(0), embedding_tensor.unsqueeze(0))
+                similarity_score = similarity.item()
+                
+                # Log similarity score
+                logging.info(f"Similarity score: {similarity_score:.4f}")
+                
+                similarity_scores = []
+                window_size = 5
+
+                # In the main loop
+                similarity_scores.append(similarity_score)
+                if len(similarity_scores) > window_size:
+                    similarity_scores.pop(0)
+                average_similarity = sum(similarity_scores) / len(similarity_scores)
+
+                if average_similarity > 0.05:  # Use the average similarity
+                    cv2.putText(frame, f"Peyman: {average_similarity:.2f}", (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                else:
+                    cv2.putText(frame, f"Not Match: {average_similarity:.2f}", (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
+                
                 # Display times
-                cv2.putText(frame, f"Embed: {embedding_time:.2f}ms", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(frame, f"Embed: {embedding_time:.2f}ms", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+
+                if previous_embedding is not None:
+                    frame_similarity = torch.nn.functional.cosine_similarity(
+                        torch.from_numpy(previous_embedding).unsqueeze(0),
+                        torch.from_numpy(embedding).unsqueeze(0)
+                    )
+                    logging.info(f"Similarity between consecutive frames: {frame_similarity.item():.4f}")
+
+                previous_embedding = embedding
 
         # Display detection time, total embedding time, and FPS
-        cv2.putText(frame, f"Detect: {detection_time:.2f}ms", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        cv2.putText(frame, f"Total Embed: {total_embedding_time:.2f}ms", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        cv2.putText(frame, f"FPS: {fps:.2f}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.putText(frame, f"Detect: {detection_time:.2f}ms", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+        #cv2.putText(frame, f"Total Embed: {total_embedding_time:.2f}ms", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+        cv2.putText(frame, f"FPS: {fps:.2f}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
 
         cv2.imshow('Face Detection and Recognition', frame)
         

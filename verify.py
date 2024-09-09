@@ -6,7 +6,7 @@ from EdgeFace.backbones import get_model
 def load_pytorch_model():
     model = get_model("edgeface_s_gamma_05")
     checkpoint_path = 'EdgeFace/checkpoints/edgeface_s_gamma_05.pt'
-    model.load_state_dict(torch.load(checkpoint_path, map_location='cpu'))
+    model.load_state_dict(torch.load(checkpoint_path, map_location='cuda:0'))
     model.eval()
     return model
 
@@ -36,7 +36,7 @@ def main():
     pytorch_output = run_pytorch_inference(pytorch_model, input_tensor)
 
     # Run inference with ONNX model
-    onnx_path = "edgeface_xs_gamma_06.onnx"
+    onnx_path = "edgeface_s_gamma_05.onnx"
     onnx_output = run_onnx_inference(onnx_path, input_tensor.numpy())
 
     # Compare outputs
