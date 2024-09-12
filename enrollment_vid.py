@@ -9,6 +9,7 @@ import torch.nn.functional as F
 import time
 from facedet import FaceDetector
 import onnxruntime as ort
+import argparse
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -16,8 +17,20 @@ logging.basicConfig(level=logging.INFO)
 # Initialize face detection model
 face_detector = FaceDetector()
 
+# Parse CLI arguments
+parser = argparse.ArgumentParser(description="Process camera feed for face embeddings.")
+parser.add_argument("--model", type=str, default="edgeface", choices=["edgeface", "arcface"], help="Face embedding model to use.")
+args = parser.parse_args()
+
+# Load the appropriate model based on CLI argument
+if args.model == "edgeface":
+    onnx_path = "models/edgeface_xs_gamma_06.onnx"
+    logging.info("Using EdgeFace model")
+elif args.model == "arcface":
+    onnx_path = "models/arcface_mobilefacenet.onnx"
+    logging.info("Using ArcFace model")
+
 # Initialize ONNX Runtime session
-onnx_path = "edgeface_xs_gamma_06.onnx"
 ort_session = ort.InferenceSession(onnx_path, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
 
 transform = transforms.Compose([

@@ -11,5 +11,5 @@
 /verification_embeddings
 /yolov5s.pt
 /backup
-/_pycache_
 /dataset
+__pycache__
