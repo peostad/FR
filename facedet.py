@@ -5,7 +5,7 @@ import onnxruntime as ort
 class FaceDetector:
     def __init__(self):
         self.model = None
-        self.load_network(model="yolov7_tiny_threeclass.onnx")
+        self.load_network(model="models/yolov7_tiny_threeclass.onnx")
 
     def load_network(self, model):
         try:
@@ -19,12 +19,13 @@ class FaceDetector:
             
             # Check which provider is actually being used
             used_provider = self.model.get_providers()[0]
-            print(f'Using provider: {used_provider}')
+            print(f'Face Detector: Using provider: {used_provider}')
 
             self.output_details = [i.name for i in self.model.get_outputs()]
             self.input_details = [i.name for i in self.model.get_inputs()]
 
             self.is_inititated = True
+            
         except Exception as e:
             print(f"Error loading model: {e}")
             print("CUDA available:", ort.get_device() == "GPU")

@@ -20,9 +20,9 @@ from PIL import Image
 from facedet import FaceDetector
 import logging
 import argparse
+from embeddings_util import get_embedding, generate_embedding_from_image, load_embedding_from_npz, load_model
 
-# Suppress onnxruntime warnings
-ort.set_default_logger_verbosity(3)
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
@@ -30,56 +30,15 @@ logging.basicConfig(level=logging.INFO)
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
-onnx_path = "edgeface_xs_gamma_06.onnx"
-ort_session = ort.InferenceSession(onnx_path, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-
-def get_embedding(image):
-    face_pil = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-    face_pil = face_pil.resize((112, 112))
-    face_np = np.array(face_pil).transpose((2, 0, 1)).astype(np.float32) / 255.0
-    face_np = (face_np - 0.5) / 0.5
-    face_np = np.expand_dims(face_np, axis=0)
-    
-    embedding_start = time.time()
-    ort_inputs = {ort_session.get_inputs()[0].name: face_np}
-    embedding = ort_session.run(None, ort_inputs)[0]
-    embedding_time = (time.time() - embedding_start) * 1000
-    
-    # Normalize the embedding
-    embedding = embedding.squeeze()
-    embedding = embedding / np.linalg.norm(embedding)
-    
-    # Log embedding information
-    # logging.info(f"Embedding shape: {embedding.shape}")
-    # logging.info(f"Embedding dtype: {embedding.dtype}")
-    # logging.info(f"Embedding norm: {np.linalg.norm(embedding)}")
-    
-    return embedding, embedding_time
-
-def generate_embedding_from_file(image_path):
-    image = cv2.imread(image_path)
-    face_detector = FaceDetector()
-    faces = face_detector.infer(image, threshold=0.3)
-    if faces:
-        face = faces[0]
-        x1, y1, x2, y2 = face["points"]
-        face_img = image[y1:y2, x1:x2]
-        embedding, _ = get_embedding(face_img)
-        return embedding
-    return None
-
-def load_embedding_from_npz(npz_path):
-    with np.load(npz_path) as data:
-        embedding = data['embeddings'][0]  # Assuming we want the first embedding
-    return embedding
 
 def main():
     parser = argparse.ArgumentParser(description='Face Detection and Recognition')
     parser.add_argument('--npz', type=str, help='Path to .npz file containing embeddings')
     parser.add_argument('--image', type=str, help='Path to image file for generating embedding')
+    parser.add_argument('--embed', type=str, help='Path to face embedding model file',default="edgeface")
     args = parser.parse_args()
-
-    model = FaceDetector()
+    face_detector = FaceDetector()
+    face_embedder = load_model(args.embed)
 
     cap = cv2.VideoCapture(0)  # 0 for default camera
 
@@ -91,9 +50,9 @@ def main():
     if args.npz:
         source_embedding = load_embedding_from_npz(args.npz)
     elif args.image:
-        source_embedding = generate_embedding_from_file(args.image)
+        source_embedding = generate_embedding_from_image(args.image, face_embedder)
     else:
-        source_embedding = generate_embedding_from_file("EdgeFace/checkpoints/pey1.jpg")
+        source_embedding = generate_embedding_from_image("EdgeFace/checkpoints/pey1.jpg", face_embedder)
     
     # Normalize source_embedding if it's not already normalized
     source_embedding = source_embedding / np.linalg.norm(source_embedding)
@@ -124,21 +83,21 @@ def main():
             start_time = time.time()
 
         detection_start = time.time()
-        faces = model.infer(frame, threshold=0.3)
+        faces = face_detector.infer(frame, threshold=0.3)
         detection_time = (time.time() - detection_start) * 1000
 
         total_embedding_time = 0
         for face in faces:
             x1, y1, x2, y2 = face["points"]
             confidence = float(face["confidence"])
-            color = (0, 255, 0)  # Green
+            color = (0, 255, 0) 
             thickness = 2
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
             cv2.putText(frame, f"Face: {confidence:.2f}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, thickness)
             
             face_img = frame[y1:y2, x1:x2]
             cv2.imshow("Face Detection", face_img)
-            embedding, embedding_time = get_embedding(face_img)
+            embedding, embedding_time = get_embedding(face_img, face_embedder)
             total_embedding_time += embedding_time
             if embedding is not None:
                 # Log current frame embedding information
@@ -168,7 +127,7 @@ def main():
                     similarity_scores.pop(0)
                 average_similarity = sum(similarity_scores) / len(similarity_scores)
 
-                if average_similarity > 0.05:  # Use the average similarity
+                if average_similarity > 0.7:  # Use the average similarity
                     cv2.putText(frame, f"Peyman: {average_similarity:.2f}", (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
                 else:
                     cv2.putText(frame, f"Not Match: {average_similarity:.2f}", (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
